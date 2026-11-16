@@ -8,8 +8,11 @@ import {
   getTrustedCertificates as nativeGetTrustedCertificates,
   refreshProxyUpstreams,
   refreshProxyInfo,
+  setProxyGate,
 } from '../../modules/expo-ssl-trust/src';
+import { clearHostCookies } from '../../modules/expo-pangolin-auth/src';
 import { authStore } from '../store/authStore';
+import { pangolinProxyPlan } from './pangolinAuth';
 import { sslCertStore, type TrustedCertEntry } from '../store/sslCertStore';
 import { fireAndForget } from '../utils/fireAndForget';
 
@@ -37,21 +40,29 @@ async function refreshTrustedCertsFromNative(): Promise<void> {
 
 /**
  * Reconcile the iOS local reverse proxy with the app's configured server URLs.
- * The proxy is only for AVPlayer streaming (`getStreamUrl`) to a trusted
- * self-signed host — login/API/covers/downloads go through the NSURLSession
- * swizzle instead. Call AFTER login (authStore is set) and at boot. No-op on
- * Android / when no configured host is self-signed.
+ * The proxy is for AVPlayer streaming (`getStreamUrl`). A pinned self-signed
+ * host is registered so playback can complete the TLS handshake. A Pangolin
+ * gate is registered too, even with a public certificate, because AVPlayer
+ * cannot attach the gate headers itself — the proxy adds them upstream.
+ * Login, the API, covers and downloads do not use the proxy. Call AFTER login
+ * (authStore is set) and at boot. No-op on Android when nothing needs it.
  */
 export async function syncProxyUpstreams(): Promise<void> {
   // The mirror must reflect native trust before we decide which hosts to route
   // (boot can call this before the initial mirror refresh has landed).
   await refreshTrustedCertsFromNative();
   const trusted = sslCertStore.getState().trustedCerts;
-  const { serverUrl, primaryServerUrl, secondaryServerUrl } = authStore.getState();
-  // Register ONLY self-signed (pinned) hosts. A normal-CA server has no entry
-  // in the trust store, so it's never routed through the proxy — it talks
-  // direct HTTPS (and a CA secondary in a failover pair stays direct). This is
-  // what keeps `resolveServerBase` an identity for non-self-signed hosts.
+  const auth = authStore.getState();
+  const plan = pangolinProxyPlan(auth);
+  if (plan.reauth) auth.setPangolinReauthRequired(true);
+  try {
+    await setProxyGate(plan.headers, plan.hosts);
+  } catch (err) {
+    console.warn('[sslTrustService] setProxyGate failed:', err);
+  }
+  const { serverUrl, primaryServerUrl, secondaryServerUrl } = auth;
+  // Pinned hosts, plus any Pangolin host the plan named. A normal-CA server
+  // with no gate is absent from both and stays a direct HTTPS connection.
   const urls = [serverUrl, primaryServerUrl, secondaryServerUrl]
     .filter((u): u is string => !!u)
     .filter((u) => {
@@ -61,7 +72,27 @@ export async function syncProxyUpstreams(): Promise<void> {
         return false;
       }
     });
-  await refreshProxyUpstreams([...new Set(urls)]);
+  await refreshProxyUpstreams([...new Set([...urls, ...plan.urls])]);
+}
+
+/**
+ * Forget the gate headers and the resource-host webview cookies. Called at the
+ * start of logout, while the credential is still in the store. Never throws.
+ */
+export async function clearPangolinGate(): Promise<void> {
+  const pangolin = authStore.getState().pangolin;
+  try {
+    await setProxyGate({}, []);
+  } catch (err) {
+    console.warn('[sslTrustService] clear proxy gate failed:', err);
+  }
+  if (pangolin?.kind === 'sso' && pangolin.host) {
+    try {
+      await clearHostCookies(pangolin.host);
+    } catch (err) {
+      console.warn('[sslTrustService] clear Pangolin cookies failed:', err);
+    }
+  }
 }
 
 let initialized = false;

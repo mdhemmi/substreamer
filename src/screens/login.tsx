@@ -1,5 +1,5 @@
 import { Redirect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ActivityIndicator,
@@ -13,11 +13,13 @@ import {
   View,
 } from 'react-native';
 
+import { signIn } from '../../modules/expo-pangolin-auth/src';
 import { CertificatePromptModal } from '../components/CertificatePromptModal';
 import { LanguageSelector } from '../components/LanguageSelector';
 import WaveformLogo from '../components/WaveformLogo';
 import { beginReidSession } from '../services/navidromeReid/reidSession';
-import { fetchServerInfo, login as subsonicLogin } from '../services/subsonicService';
+import { requestHostname, type PangolinCredential } from '../services/pangolinAuth';
+import { fetchServerInfo, login as subsonicLogin, normalizeServerUrl } from '../services/subsonicService';
 import { trustCertificateForHost } from '../services/sslTrustService';
 import { authStore } from '../store/authStore';
 import { onboardingStore } from '../store/onboardingStore';
@@ -32,6 +34,13 @@ import {
 
 const PRIMARY = '#1D9BF0';
 
+type GateMode = 'off' | 'sso' | 'token';
+
+function isCancel(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err
+    && (err as { code: unknown }).code === 'ERR_CANCELLED';
+}
+
 export function LoginScreen() {
   const router = useRouter();
   const { t } = useTranslation();
@@ -45,12 +54,56 @@ export function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [legacyAuth, setLegacyAuth] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [gateMode, setGateMode] = useState<GateMode>('off');
+  const [tokenId, setTokenId] = useState('');
+  const [accessToken, setAccessToken] = useState('');
+  const capturedSso = useRef<PangolinCredential | null>(null);
 
   // SSL certificate prompt state
   const [certModalVisible, setCertModalVisible] = useState(false);
   const [certInfo, setCertInfo] = useState<CertificateInfo | null>(null);
   const [certHostname, setCertHostname] = useState('');
   const [isCertRotation, setIsCertRotation] = useState(false);
+
+  const resolveGate = useCallback(async (
+    url: string,
+  ): Promise<{ ok: true; pangolin: PangolinCredential | null } | { ok: false; error: string }> => {
+    if (Platform.OS !== 'ios' || gateMode === 'off') {
+      capturedSso.current = null;
+      return { ok: true, pangolin: null };
+    }
+    if (gateMode === 'token') {
+      const id = tokenId.trim();
+      const secret = accessToken.trim();
+      if (!id || !secret) return { ok: false, error: t('fillAllFields') };
+      capturedSso.current = null;
+      return { ok: true, pangolin: { kind: 'token', tokenId: id, token: secret } };
+    }
+    if (capturedSso.current?.kind === 'sso') return { ok: true, pangolin: capturedSso.current };
+    try {
+      const normalized = normalizeServerUrl(url);
+      const cookies = await signIn(normalized, t('cancel'));
+      const host = requestHostname(normalized);
+      const usable = cookies.filter((cookie) => cookie.name && cookie.value);
+      if (!host || usable.length === 0) return { ok: false, error: t('pangolinSignInFailed') };
+      const pangolin: PangolinCredential = {
+        kind: 'sso',
+        host,
+        cookies: usable.map((cookie) => ({
+          name: cookie.name,
+          value: cookie.value,
+          expiresAt: typeof cookie.expiresAt === 'number' ? cookie.expiresAt : null,
+        })),
+      };
+      capturedSso.current = pangolin;
+      return { ok: true, pangolin };
+    } catch (err) {
+      return {
+        ok: false,
+        error: t(isCancel(err) ? 'pangolinSignInCancelled' : 'pangolinSignInFailed'),
+      };
+    }
+  }, [accessToken, gateMode, t, tokenId]);
 
   const handleTrustCertificate = useCallback(async () => {
     if (!certInfo || !certHostname) return;
@@ -73,19 +126,27 @@ export function LoginScreen() {
       const user = username.trim();
       const pass = password;
 
-      const result = await subsonicLogin(url, user, pass, legacyAuth);
+      const gate = await resolveGate(url);
+      if (!gate.ok) {
+        setLoading(false);
+        setError(gate.error);
+        return;
+      }
+
+      const result = await subsonicLogin(url, user, pass, legacyAuth, gate.pangolin);
 
       if (result.success) {
         // Before the session starts, and with the button still disabled: see handleSubmit.
         await beginReidSession(result);
         setLoading(false);
-        setSession(url, user, pass, result.version, legacyAuth);
+        setSession(url, user, pass, result.version, legacyAuth, gate.pangolin);
         // The streaming proxy is brought up by the session-driven effect in
         // _layout (runs whenever logged-in + hydrated), so no proxy call here.
         const info = await fetchServerInfo();
         if (info) serverInfoStore.getState().setServerInfo(info);
         router.replace('/');
       } else {
+        capturedSso.current = null;
         setLoading(false);
         setError(result.error || t('connectionFailedAfterTrust'));
       }
@@ -97,7 +158,7 @@ export function LoginScreen() {
         })
       );
     }
-  }, [certInfo, certHostname, serverUrl, username, password, legacyAuth, setSession, router]);
+  }, [certInfo, certHostname, serverUrl, username, password, legacyAuth, resolveGate, setSession, router, t]);
 
   const handleCancelCert = useCallback(() => {
     setCertModalVisible(false);
@@ -175,14 +236,21 @@ export function LoginScreen() {
     setError(null);
     setLoading(true);
 
-    const result = await subsonicLogin(url, user, pass, legacyAuth);
+    const gate = await resolveGate(url);
+    if (!gate.ok) {
+      setLoading(false);
+      setError(gate.error);
+      return;
+    }
+
+    const result = await subsonicLogin(url, user, pass, legacyAuth, gate.pangolin);
 
     if (result.success) {
       // Settle the Navidrome re-key question before anything keyed on the session runs,
       // and keep the button disabled until then so a second tap cannot start another.
       await beginReidSession(result);
       setLoading(false);
-      setSession(url, user, pass, result.version, legacyAuth);
+      setSession(url, user, pass, result.version, legacyAuth, gate.pangolin);
       // Streaming proxy is brought up by the session-driven effect in _layout.
       const info = await fetchServerInfo();
       if (info) serverInfoStore.getState().setServerInfo(info);
@@ -190,6 +258,15 @@ export function LoginScreen() {
         onboardingStore.getState().show();
       }
       router.replace('/');
+      return;
+    }
+
+    // A failed ping does not keep the cookies. The next attempt signs in again.
+    capturedSso.current = null;
+
+    if (result.pangolinGate) {
+      setLoading(false);
+      setError(result.error);
       return;
     }
 
@@ -262,8 +339,9 @@ export function LoginScreen() {
             placeholder={t('loginServerPlaceholder')}
             placeholderTextColor="rgba(255,255,255,0.85)"
             value={serverUrl}
-            onChangeText={(t) => {
-              setServerUrl(t);
+            onChangeText={(value) => {
+              setServerUrl(value);
+              capturedSso.current = null;
               setError(null);
             }}
             autoCapitalize="none"
@@ -300,6 +378,58 @@ export function LoginScreen() {
             returnKeyType="go"
             onSubmitEditing={handleSubmit}
           />
+
+          {Platform.OS === 'ios' && (
+            <View style={styles.gateSection}>
+              <Text style={styles.switchLabel}>{t('pangolinGate')}</Text>
+              <Text style={styles.switchHint}>{t('pangolinGateHint')}</Text>
+              <View style={styles.gateRow}>
+                {([
+                  ['off', 'pangolinOff'],
+                  ['sso', 'pangolinSignIn'],
+                  ['token', 'pangolinAccessToken'],
+                ] as const).map(([mode, labelKey]) => (
+                  <Pressable
+                    key={mode}
+                    onPress={() => {
+                      setGateMode(mode);
+                      capturedSso.current = null;
+                      setError(null);
+                    }}
+                    disabled={loading}
+                    style={[styles.gateChoice, gateMode === mode && styles.gateChoiceOn]}
+                  >
+                    <Text style={styles.gateChoiceText}>{t(labelKey)}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              {gateMode === 'token' && (
+                <>
+                  <TextInput
+                    style={styles.input}
+                    placeholder={t('pangolinTokenId')}
+                    placeholderTextColor="rgba(255,255,255,0.85)"
+                    value={tokenId}
+                    onChangeText={setTokenId}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!loading}
+                  />
+                  <TextInput
+                    style={styles.input}
+                    placeholder={t('pangolinToken')}
+                    placeholderTextColor="rgba(255,255,255,0.85)"
+                    value={accessToken}
+                    onChangeText={setAccessToken}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    secureTextEntry
+                    editable={!loading}
+                  />
+                </>
+              )}
+            </View>
+          )}
 
           <Pressable
             style={styles.advancedToggle}
@@ -433,6 +563,30 @@ const styles = StyleSheet.create({
   },
   inputLast: {
     marginBottom: 4,
+  },
+  gateSection: {
+    marginTop: 8,
+  },
+  gateRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  gateChoice: {
+    flex: 1,
+    borderRadius: 10,
+    paddingVertical: 8,
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  gateChoiceOn: {
+    backgroundColor: 'rgba(255,255,255,0.32)',
+  },
+  gateChoiceText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
   },
   error: {
     fontSize: 14,

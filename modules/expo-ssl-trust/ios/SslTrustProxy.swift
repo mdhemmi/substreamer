@@ -32,6 +32,9 @@ final class SslTrustProxy: NSObject {
     /// valid across background-suspend/foreground restarts (only the port may
     /// change, and JS refreshes that on foreground).
     private var upstreamsByToken: [String: String] = [:]
+    /// Gate headers added to an upstream request when its hostname is in `gateHosts`.
+    private var gateHeaders: [String: String] = [:]
+    private var gateHosts: Set<String> = []
 
     /// Pinned-trust delegate for the upstream HTTPS connection. Passed as the
     /// PER-TASK delegate to `bytes(for:delegate:)` (see `forward`). The async
@@ -63,6 +66,19 @@ final class SslTrustProxy: NSObject {
     private let connQueue = DispatchQueue(label: "expo.ssltrust.proxy.conn", attributes: .concurrent)
 
     // MARK: - Public API (called from ExpoSslTrustModule on the JS thread)
+
+    /// Replace the headers injected on upstream requests for `hosts` (lowercased
+    /// hostnames, no port). An empty host list clears the gate.
+    func setGate(headers: [String: String], hosts: [String]) {
+        stateLock.withLock {
+            gateHeaders = headers
+            gateHosts = Set(hosts.map { $0.lowercased() })
+        }
+    }
+
+    func gateHostSet() -> Set<String> {
+        stateLock.withLock { gateHosts }
+    }
 
     /// Register `baseUrl` as a forwardable upstream and return its token,
     /// starting the listener if needed. Idempotent — an already-registered base
@@ -303,6 +319,15 @@ final class SslTrustProxy: NSObject {
         }
     }
 
+    private func gateHeadersFor(_ upstream: URL) -> [String: String] {
+        stateLock.withLock {
+            guard let raw = upstream.host?.lowercased() else { return [:] }
+            let name = raw.split(separator: ":").first.map(String.init) ?? raw
+            guard gateHosts.contains(name) else { return [:] }
+            return gateHeaders
+        }
+    }
+
     // MARK: - Forwarding
 
     private func forward(_ conn: NWConnection, req: ParsedRequest, body: Data, taskBox: TaskBox) {
@@ -321,6 +346,11 @@ final class SslTrustProxy: NSObject {
         // Relay headers that matter to the upstream (Range, content negotiation,
         // auth, user-agent, content-type for POST). Skip hop-by-hop + Host.
         for (name, value) in req.forwardableHeaders {
+            request.setValue(value, forHTTPHeaderField: name)
+        }
+        // AVPlayer does not send the Pangolin gate. Add it here when this
+        // upstream's host is one the session named.
+        for (name, value) in self.gateHeadersFor(upstream) {
             request.setValue(value, forHTTPHeaderField: name)
         }
         if !body.isEmpty {

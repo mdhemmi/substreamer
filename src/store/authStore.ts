@@ -3,6 +3,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 
 // Synchronous adapter: `isLoggedIn` gates the login redirect at boot — async
 // hydration would flash the logged-out state then bounce.
+import { type PangolinCredential } from '../services/pangolinAuth';
 import { isLogoutPending } from './logoutPending';
 import { kvStorageSync as kvStorage } from './persistence';
 
@@ -27,12 +28,21 @@ export interface AuthState {
   /** Which slot `serverUrl` currently mirrors. */
   activeServer: ServerSlot;
 
+  /**
+   * Gate in front of the music server. Null when the server is reached directly.
+   * SSO cookies are for `host` only; an access token is sent to every slot.
+   */
+  pangolin: PangolinCredential | null;
+  /** Transient. A 401 from the gate asks the user to sign in again without logging out. */
+  pangolinReauthRequired: boolean;
+
   setSession: (
     serverUrl: string,
     username: string,
     password: string,
     apiVersion: string,
     legacyAuth?: boolean,
+    pangolin?: PangolinCredential | null,
   ) => void;
   setRehydrated: (value: boolean) => void;
   /** Change the stored password only. A password change is not a session change:
@@ -57,6 +67,9 @@ export interface AuthState {
    *  Account settings toggle. The API + cover-art caches key on `legacyAuth`,
    *  so they rebuild on next use (pair with `clearApiCache()`). */
   setLegacyAuth: (legacyAuth: boolean) => void;
+  /** Replace the gate on an existing session. Clears the re-auth flag. */
+  setPangolin: (pangolin: PangolinCredential | null) => void;
+  setPangolinReauthRequired: (required: boolean) => void;
 }
 
 const PERSIST_KEY = 'substreamer-auth';
@@ -82,8 +95,10 @@ export const authStore = create<AuthState>()(
       primaryServerUrl: null,
       secondaryServerUrl: null,
       activeServer: 'primary',
+      pangolin: null,
+      pangolinReauthRequired: false,
 
-      setSession: (serverUrl, username, password, apiVersion, legacyAuth = false) =>
+      setSession: (serverUrl, username, password, apiVersion, legacyAuth = false, pangolin = null) =>
         set({
           // Login defines the primary. Active resets to primary so a
           // re-login after failover always starts on the new primary.
@@ -94,6 +109,8 @@ export const authStore = create<AuthState>()(
           password,
           apiVersion,
           legacyAuth,
+          pangolin,
+          pangolinReauthRequired: false,
           isLoggedIn: true,
           rehydrated: true,
         }),
@@ -128,6 +145,10 @@ export const authStore = create<AuthState>()(
         ),
 
       setLegacyAuth: (legacyAuth) => set({ legacyAuth }),
+
+      setPangolin: (pangolin) => set({ pangolin, pangolinReauthRequired: false }),
+
+      setPangolinReauthRequired: (pangolinReauthRequired) => set({ pangolinReauthRequired }),
     }),
     {
       name: PERSIST_KEY,
@@ -142,6 +163,7 @@ export const authStore = create<AuthState>()(
         primaryServerUrl: state.primaryServerUrl,
         secondaryServerUrl: state.secondaryServerUrl,
         activeServer: state.activeServer,
+        pangolin: state.pangolin,
       }),
       // A pending logout reads as logged out from the first frame; the splash finishes it.
       // The result replaces the whole state, so it must carry the actions.

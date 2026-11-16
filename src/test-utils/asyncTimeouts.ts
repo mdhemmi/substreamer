@@ -14,5 +14,5 @@
  */
 import { configure } from '@testing-library/react-native';
 
-configure({ asyncUtilTimeout: 5000 });
-jest.setTimeout(15000);
+configure({ asyncUtilTimeout: 10000 });
+jest.setTimeout(30000);

@@ -121,6 +121,10 @@ class ExpoSslTrustModule : Module() {
             }
         }
 
+        AsyncFunction("setProxyGate") { headers: Map<String, String>, hosts: List<String>, promise: Promise ->
+            promise.resolve(null)
+        }
+
         AsyncFunction("isCertificateTrusted") { hostname: String, promise: Promise ->
             try {
                 val context = appContext.reactContext ?: throw Exception("React context not available")

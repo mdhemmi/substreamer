@@ -41,6 +41,7 @@ import { mixHexColors } from '../utils/colors';
 import { runWhenIdle } from '../utils/runWhenIdle';
 import AnimatedSplashScreen from '../components/AnimatedSplashScreen';
 import { CertificatePromptModal } from '../components/CertificatePromptModal';
+import { PangolinReauthModal } from '../components/PangolinReauthModal';
 import { CreateShareSheet } from '../components/CreateShareSheet';
 import { PlayerTabletLandscape } from '../components/player/PlayerTabletLandscape';
 import { PlayerTabletSplitview } from '../components/player/PlayerTabletSplitview';
@@ -901,6 +902,8 @@ export default function RootLayout() {
           opens (e.g. after closing MoreOptionsSheet's BottomSheet on
           Android) don't race the previous Modal's native dismiss. */}
       <ThemedAlertHost />
+
+      <PangolinReauthModal />
 
       {/* Global SSL certificate prompt driven by certPromptStore */}
       <CertificatePromptModal

@@ -70,6 +70,7 @@
     "expo-location": "~58.0.19",
     "expo-move-to-back": "file:./modules/expo-move-to-back",
     "expo-notifications": "~58.1.6",
+    "expo-pangolin-auth": "file:./modules/expo-pangolin-auth",
     "expo-router": "~58.0.27",
     "expo-screen-orientation": "~58.0.3",
     "expo-scroll-to-top": "file:./modules/expo-scroll-to-top",
@@ -124,7 +125,8 @@
         "@shopify/flash-list",
         "react-native-bootsplash",
         "react-native-gesture-handler",
-        "react-native-keyboard-controller"
+        "react-native-keyboard-controller",
+        "expo-pangolin-auth"
       ]
     },
     "doctor": {
@@ -137,6 +139,7 @@
           "expo-image-colors",
           "expo-image-resize",
           "expo-move-to-back",
+          "expo-pangolin-auth",
           "expo-scroll-to-top",
           "expo-ssl-trust",
           "react-native-nitro-modules",

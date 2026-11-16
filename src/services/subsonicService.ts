@@ -19,6 +19,14 @@ import { resolveServerBase } from '../../modules/expo-ssl-trust/src';
 import i18n from '../i18n/i18n';
 
 import { authStore } from '../store/authStore';
+import {
+  applyPangolinHeaders,
+  notePangolinGateResponse,
+  pangolinRequestHeaders,
+  requestInputUrl,
+  responseIsPangolinGate,
+  type PangolinCredential,
+} from './pangolinAuth';
 import { offlineModeStore } from '../store/offlineModeStore';
 import { FORMAT_PRESETS, playbackSettingsStore, type StreamFormat, type MaxBitRate } from '../store/playbackSettingsStore';
 import { serverInfoStore, type ServerInfo } from '../store/serverInfoStore';
@@ -71,18 +79,53 @@ type LoginResult =
       /** OpenSubsonic `serverVersion`, as `fetchServerInfo` derives it; null on a classic server. */
       serverVersion: string | null;
     }
-  | { success: false; error: string };
+  | { success: false; error: string; pangolinGate?: boolean };
+
+/**
+ * Fetch that adds the Pangolin gate headers. `credential` overrides the store
+ * for a login that has not been saved yet. `noteReauth` is for a live session:
+ * a gate 401 raises the re-auth flag and still returns the response.
+ */
+function pangolinFetch(
+  credential: PangolinCredential | null | undefined,
+  noteReauth: boolean,
+  onGate?: () => void,
+): typeof fetch {
+  return async (input, init) => {
+    const gate = credential === undefined ? authStore.getState().pangolin : credential;
+    const extra = pangolinRequestHeaders(requestInputUrl(input), gate);
+    const response = await globalThis.fetch(input, applyPangolinHeaders(init, extra));
+    if (await responseIsPangolinGate(response)) {
+      onGate?.();
+      if (noteReauth) await notePangolinGateResponse(response);
+    }
+    return response;
+  };
+}
+
+/** Store-backed fetch for every client created after login. */
+const sessionPangolinFetch: typeof fetch = (input, init) =>
+  pangolinFetch(undefined, true)(input, init);
 
 export async function login(
   serverUrl: string,
   username: string,
   password: string,
-  legacyAuth = false
+  legacyAuth = false,
+  /**
+   * Gate to send on this ping. `undefined` uses the saved credential (a check
+   * from an existing session). `null` sends no gate headers.
+   */
+  pangolin?: PangolinCredential | null,
 ): Promise<LoginResult> {
   // Login uses RN fetch (NSURLSession), so iOS self-signed trust is handled by
   // the SslTrustURLProtocol swizzle — same as Android's OkHttp path. No proxy
   // here; the proxy is only for AVPlayer streaming (getStreamUrl).
   const url = normalizeServerUrl(serverUrl);
+  // A ping from a live session (no explicit credential) may discover that the
+  // saved gate has expired. A login-screen attempt handles that itself.
+  const noteReauth = pangolin === undefined && authStore.getState().isLoggedIn;
+  let sawGate = false;
   const api = new SubsonicAPI({
     url,
     auth: { username: username.trim(), password },
@@ -91,6 +134,7 @@ export async function login(
     crypto: reactNativeCrypto,
     clientName: SUBSONIC_CLIENT_NAME,
     clientVersion: SUBSONIC_API_VERSION,
+    fetch: pangolinFetch(pangolin, noteReauth, () => { sawGate = true; }),
   });
 
   try {
@@ -115,6 +159,9 @@ export async function login(
       serverVersion: (openSubsonic && 'serverVersion' in response ? response.serverVersion : null) ?? null,
     };
   } catch (err) {
+    if (sawGate) {
+      return { success: false, error: i18n.t('pangolinGateDetected'), pangolinGate: true };
+    }
     const message = err instanceof Error ? err.message : i18n.t('connectionFailed');
     return { success: false, error: message };
   }
@@ -168,6 +215,7 @@ export function getApiUnchecked(): SubsonicAPI | null {
     crypto: reactNativeCrypto,
     clientName: SUBSONIC_CLIENT_NAME,
     clientVersion: SUBSONIC_API_VERSION,
+    fetch: sessionPangolinFetch,
   });
   cachedKey = key;
   return cachedApi;
@@ -202,6 +250,7 @@ export function buildPingApi(url: string): SubsonicAPI | null {
     crypto: reactNativeCrypto,
     clientName: SUBSONIC_CLIENT_NAME,
     clientVersion: SUBSONIC_API_VERSION,
+    fetch: sessionPangolinFetch,
   });
 }
 

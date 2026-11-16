@@ -23,6 +23,7 @@ interface ExpoSslTrustNative {
   /** iOS-only local reverse proxy. Android resolves these via stubs (no proxy). */
   syncProxyUpstreams(baseUrls: string[]): Promise<ProxyInfo | null>;
   getProxyInfo(): Promise<ProxyInfo | null>;
+  setProxyGate(headers: Record<string, string>, hosts: string[]): Promise<void>;
 }
 
 // Load the native module from JSI. If the native module is not available
@@ -53,6 +54,7 @@ try {
     isCertificateTrusted: () => Promise.resolve(false),
     syncProxyUpstreams: () => Promise.resolve(null),
     getProxyInfo: () => Promise.resolve(null),
+    setProxyGate: () => Promise.resolve(),
   };
 }
 

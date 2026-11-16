@@ -78,7 +78,7 @@ public class ExpoAsyncFsModule: Module {
       return true
     }
 
-    AsyncFunction("downloadFileAsyncWithProgress") { (urlString: String, destinationUri: String, downloadId: String) -> [String: Any] in
+    AsyncFunction("downloadFileAsyncWithProgress") { (urlString: String, destinationUri: String, downloadId: String, headers: [String: String]?) -> [String: Any] in
       guard let url = URL(string: urlString) else {
         throw DownloadError.invalidUrl
       }
@@ -89,6 +89,11 @@ public class ExpoAsyncFsModule: Module {
 
       var request = URLRequest(url: url)
       request.cachePolicy = .reloadIgnoringLocalCacheData
+      if let headers {
+        for (name, value) in headers {
+          request.setValue(value, forHTTPHeaderField: name)
+        }
+      }
 
       let config = URLSessionConfiguration.default
       config.requestCachePolicy = .reloadIgnoringLocalCacheData

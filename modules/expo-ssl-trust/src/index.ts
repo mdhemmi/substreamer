@@ -9,6 +9,8 @@ export {
   getInstallStatus,
   isSSLError,
   resolveServerBase,
+  rewriteThroughProxy,
+  setProxyGate,
   refreshProxyUpstreams,
   refreshProxyInfo,
   __setProxyInfoForTests,

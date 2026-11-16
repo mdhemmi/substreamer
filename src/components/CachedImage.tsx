@@ -51,6 +51,8 @@ import {
 import { logImageCache } from '../services/imageCacheLogger';
 import { STARRED_COVER_ART_ID } from '../services/musicCacheService';
 import { VARIOUS_ARTISTS_COVER_ART_ID } from '../services/subsonicService';
+import { pangolinRequestHeaders } from '../services/pangolinAuth';
+import { authStore } from '../store/authStore';
 import { layoutPreferencesStore } from '../store/layoutPreferencesStore';
 import { offlineModeStore } from '../store/offlineModeStore';
 
@@ -68,6 +70,11 @@ const MAX_LOGO_SIZE = 80;
 const LOGO_SCALE = 0.4;
 /** Default colour for the placeholder waveform bars. */
 const PLACEHOLDER_COLOR = 'rgba(150,150,150,0.25)';
+
+function expoSource(uri: string, pangolin: ReturnType<typeof authStore.getState>['pangolin']) {
+  const headers = pangolinRequestHeaders(uri, pangolin);
+  return Object.keys(headers).length > 0 ? { uri, headers } : { uri };
+}
 
 /** RN `resizeMode` → expo-image `contentFit`. Covers are square-filled ('cover'). */
 const RESIZE_MODE_TO_CONTENT_FIT: Record<string, 'cover' | 'contain' | 'fill' | 'none'> = {
@@ -144,6 +151,7 @@ export const CachedImage = memo(function CachedImage({
   // variant OR a failedRemoteIds flip) and by onError, to re-run the async
   // cover-art resolution below.
   const [resolveToken, bumpResolve] = useReducer((x: number) => x + 1, 0);
+  const pangolin = authStore((s) => s.pangolin);
 
   // Resolved display target, filled asynchronously via the shared resolver
   // (`resolveDisplayImage` — the single source of truth also used by the CarPlay
@@ -291,7 +299,7 @@ export const CachedImage = memo(function CachedImage({
       </View>
       {renderUri && (
         <ExpoImage
-          source={{ uri: renderUri }}
+          source={expoSource(renderUri, pangolin)}
           style={StyleSheet.absoluteFill as ImageStyle}
           contentFit={contentFit}
           onError={onError}

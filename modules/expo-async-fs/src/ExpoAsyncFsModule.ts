@@ -34,6 +34,7 @@ interface ExpoAsyncFsNativeModule {
     url: string,
     destinationUri: string,
     downloadId: string,
+    headers: Record<string, string> | null,
   ): Promise<DownloadResult>;
   addListener(eventName: string, listener: (event: DownloadProgressEvent) => void): EventSubscription;
 }

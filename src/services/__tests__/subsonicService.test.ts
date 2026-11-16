@@ -1,6 +1,20 @@
 jest.mock('subsonic-api', () => ({
   __esModule: true,
-  default: class {},
+  // Login tests replace `prototype.ping`. The default calls the fetch the app
+  // passed in, so a gate 401 is visible to that fetch wrapper.
+  default: class {
+    fetchFn: typeof fetch;
+    constructor(config?: { fetch?: typeof fetch }) {
+      this.fetchFn = config?.fetch ?? globalThis.fetch;
+    }
+    async ping() {
+      const res = await this.fetchFn('https://music.example.com/rest/ping.view', {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }
+  },
 }));
 jest.mock('expo-crypto', () => ({
   getRandomValues: jest.fn((arr: Uint8Array) => arr),
@@ -372,6 +386,42 @@ describe('getApi', () => {
 
 describe('login', () => {
   const { default: SubsonicAPI } = require('subsonic-api');
+  let realPing: typeof SubsonicAPI.prototype.ping;
+  beforeAll(() => {
+    realPing = SubsonicAPI.prototype.ping;
+  });
+
+  it('sends an explicit Pangolin credential and reports a gate 401', async () => {
+    const previous = SubsonicAPI.prototype.ping;
+    SubsonicAPI.prototype.ping = realPing;
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('<html>pangolin</html>', {
+        status: 401,
+        headers: {
+          'content-type': 'text/html',
+          'www-authenticate': 'Basic realm="pangolin"',
+        },
+      }),
+    );
+    try {
+      const { login } = require('../subsonicService');
+      const result = await login('https://music.example.com', 'user', 'pass', false, {
+        kind: 'token',
+        tokenId: 'tid',
+        token: 'secret',
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) expect(result.pangolinGate).toBe(true);
+      const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+      const headers = new Headers(init?.headers);
+      expect(headers.get('P-Access-Token-Id')).toBe('tid');
+      expect(headers.get('P-Access-Token')).toBe('secret');
+      expect(fetchMock.mock.calls[0]?.[0]).not.toContain('secret');
+    } finally {
+      fetchMock.mockRestore();
+      SubsonicAPI.prototype.ping = previous;
+    }
+  });
 
   it('returns success with version on successful ping', async () => {
     SubsonicAPI.prototype.ping = jest.fn().mockResolvedValue({

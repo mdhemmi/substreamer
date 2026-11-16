@@ -16,6 +16,8 @@ beforeEach(() => {
     primaryServerUrl: null,
     secondaryServerUrl: null,
     activeServer: 'primary',
+    pangolin: null,
+    pangolinReauthRequired: false,
   });
 });
 
@@ -38,6 +40,36 @@ describe('authStore', () => {
   it('setSession stores legacyAuth when true', () => {
     authStore.getState().setSession('https://music.example.com', 'user', 'pass', '1.16', true);
     expect(authStore.getState().legacyAuth).toBe(true);
+  });
+
+  it('setSession stores a Pangolin credential and clears a pending re-auth', () => {
+    authStore.getState().setPangolinReauthRequired(true);
+    const pangolin = { kind: 'token' as const, tokenId: 'id', token: 'secret' };
+    authStore.getState().setSession('https://music.example.com', 'user', 'pass', '1.16', false, pangolin);
+    expect(authStore.getState().pangolin).toEqual(pangolin);
+    expect(authStore.getState().pangolinReauthRequired).toBe(false);
+  });
+
+  it('setSession without a gate clears a previous credential', () => {
+    authStore.getState().setSession(
+      'https://music.example.com', 'user', 'pass', '1.16', false,
+      { kind: 'token', tokenId: 'id', token: 'secret' },
+    );
+    authStore.getState().setSession('https://music.example.com', 'user', 'pass', '1.16');
+    expect(authStore.getState().pangolin).toBeNull();
+  });
+
+  it('setPangolin replaces the gate without touching the server slots', () => {
+    authStore.getState().setSession('https://music.example.com', 'user', 'pass', '1.16');
+    authStore.getState().setSecondaryServerUrl('https://backup.example.com');
+    authStore.getState().setPangolinReauthRequired(true);
+    authStore.getState().setPangolin({ kind: 'sso', host: 'music.example.com', cookies: [] });
+    const state = authStore.getState();
+    expect(state.pangolin).toEqual({ kind: 'sso', host: 'music.example.com', cookies: [] });
+    expect(state.pangolinReauthRequired).toBe(false);
+    expect(state.serverUrl).toBe('https://music.example.com');
+    expect(state.secondaryServerUrl).toBe('https://backup.example.com');
+    expect(state.password).toBe('pass');
   });
 
   it('setLegacyAuth flips the auth scheme without disturbing the server slots', () => {

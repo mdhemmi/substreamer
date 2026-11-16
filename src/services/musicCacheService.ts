@@ -36,7 +36,9 @@ import {
 import { checkStorageLimit } from './storageService';
 import { beginDownload, clearDownload } from './downloadSpeedTracker';
 import { fetchAlbumDetail, fetchPlaylistDetail } from './detailFetchService';
+import { authStore } from '../store/authStore';
 import { favoritesStore } from '../store/favoritesStore';
+import { pangolinRequestHeaders } from './pangolinAuth';
 import { storageLimitStore } from '../store/storageLimitStore';
 import {
   musicCacheStore,
@@ -1493,7 +1495,12 @@ async function downloadSong(track: Child, workerId: number): Promise<CachedSongM
   try {
     beginDownload(track.id);
     const tmpDest = new File(albumDir, tmpName);
-    await downloadFileAsyncWithProgress(url, tmpDest.uri, track.id);
+    await downloadFileAsyncWithProgress(
+      url,
+      tmpDest.uri,
+      track.id,
+      pangolinRequestHeaders(url, authStore.getState().pangolin),
+    );
     if (workerId !== processingId && isReidRunning()) {
       try { tmpDest.delete(); } catch { /* best-effort */ }
       clearDownload(track.id);
@@ -1653,8 +1660,13 @@ export async function redownloadTrack(
     if (tmp.exists) {
       try { tmp.delete(); } catch { /* best-effort */ }
     }
-    await File.downloadFileAsync(url, tmp);
-    const bytes = tmp.exists ? tmp.size ?? 0 : 0;
+    const downloaded = await downloadFileAsyncWithProgress(
+      url,
+      tmp.uri,
+      trackId,
+      pangolinRequestHeaders(url, authStore.getState().pangolin),
+    );
+    const bytes = downloaded.bytes;
     if (bytes === 0) {
       // Empty/failed download — discard the tmp and keep the existing file.
       try { tmp.delete(); } catch { /* best-effort */ }

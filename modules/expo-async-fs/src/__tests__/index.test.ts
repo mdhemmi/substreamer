@@ -105,6 +105,7 @@ describe('downloadFileAsyncWithProgress', () => {
       'https://server.com/song.mp3',
       'file:///dest/song.mp3',
       'dl-001',
+      null,
     );
     expect(result).toEqual(expected);
   });
@@ -115,6 +116,27 @@ describe('downloadFileAsyncWithProgress', () => {
     await expect(
       downloadFileAsyncWithProgress('https://fail.com/x', 'file:///dest', 'dl-002'),
     ).rejects.toThrow('Network error');
+  });
+
+  it('forwards gate headers and drops an empty header map', async () => {
+    mockModule.downloadFileAsyncWithProgress.mockResolvedValue({ uri: 'file:///dest', bytes: 1 });
+    await downloadFileAsyncWithProgress('https://server.com/a', 'file:///dest', 'dl-003', {
+      'P-Access-Token': 'secret',
+    });
+    expect(mockModule.downloadFileAsyncWithProgress).toHaveBeenCalledWith(
+      'https://server.com/a',
+      'file:///dest',
+      'dl-003',
+      { 'P-Access-Token': 'secret' },
+    );
+
+    await downloadFileAsyncWithProgress('https://server.com/b', 'file:///dest', 'dl-004', {});
+    expect(mockModule.downloadFileAsyncWithProgress).toHaveBeenLastCalledWith(
+      'https://server.com/b',
+      'file:///dest',
+      'dl-004',
+      null,
+    );
   });
 });
 

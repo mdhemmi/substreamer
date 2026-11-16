@@ -8,6 +8,8 @@ const mockNativeGetTrustedCertificates = jest.fn();
 const mockRefreshProxyUpstreams = jest.fn();
 const mockRefreshProxyInfo = jest.fn();
 
+const mockSetProxyGate = jest.fn();
+
 jest.mock('../../../modules/expo-ssl-trust/src', () => ({
   initTrustStore: mockInitTrustStore,
   trustCertificate: mockNativeTrustCertificate,
@@ -16,6 +18,11 @@ jest.mock('../../../modules/expo-ssl-trust/src', () => ({
   getTrustedCertificates: mockNativeGetTrustedCertificates,
   refreshProxyUpstreams: mockRefreshProxyUpstreams,
   refreshProxyInfo: mockRefreshProxyInfo,
+  setProxyGate: (...args: unknown[]) => mockSetProxyGate(...args),
+}));
+
+jest.mock('../../../modules/expo-pangolin-auth/src', () => ({
+  clearHostCookies: jest.fn(() => Promise.resolve()),
 }));
 
 // sslCertStore is a non-persisted mirror. The mock setter updates the local
@@ -34,13 +41,17 @@ jest.mock('../../store/sslCertStore', () => ({
   },
 }));
 
+const mockAuth = {
+  serverUrl: null as string | null,
+  primaryServerUrl: null as string | null,
+  secondaryServerUrl: null as string | null,
+  pangolin: null as unknown,
+  setPangolinReauthRequired: jest.fn(),
+};
+
 jest.mock('../../store/authStore', () => ({
   authStore: {
-    getState: jest.fn(() => ({
-      serverUrl: null,
-      primaryServerUrl: null,
-      secondaryServerUrl: null,
-    })),
+    getState: jest.fn(() => mockAuth),
   },
 }));
 
@@ -52,6 +63,12 @@ beforeEach(() => {
   mockNativeGetTrustedCertificates.mockReset().mockResolvedValue([]);
   mockRefreshProxyUpstreams.mockReset().mockResolvedValue(null);
   mockRefreshProxyInfo.mockReset().mockResolvedValue(undefined);
+  mockSetProxyGate.mockReset().mockResolvedValue(undefined);
+  mockAuth.setPangolinReauthRequired.mockClear();
+  mockAuth.serverUrl = null;
+  mockAuth.primaryServerUrl = null;
+  mockAuth.secondaryServerUrl = null;
+  mockAuth.pangolin = null;
   mockSetTrustedCerts.mockClear();
   mockTrustedCerts = {};
 });
@@ -233,6 +250,66 @@ describe('clearAllNativeTrust', () => {
 
     const { clearAllNativeTrust } = loadFreshService();
     await expect(clearAllNativeTrust()).resolves.toBeUndefined();
+    warnSpy.mockRestore();
+  });
+});
+
+describe('syncProxyUpstreams', () => {
+  it('registers a Pangolin host that has no pinned certificate and pushes its headers', async () => {
+    mockAuth.serverUrl = 'https://music.example.com';
+    mockAuth.primaryServerUrl = 'https://music.example.com';
+    mockAuth.pangolin = { kind: 'token', tokenId: 'tid', token: 'secret' };
+    const { syncProxyUpstreams } = loadFreshService();
+
+    await syncProxyUpstreams();
+
+    expect(mockSetProxyGate).toHaveBeenCalledWith(
+      { 'P-Access-Token-Id': 'tid', 'P-Access-Token': 'secret' },
+      ['music.example.com'],
+    );
+    expect(mockRefreshProxyUpstreams).toHaveBeenCalledWith(['https://music.example.com']);
+  });
+
+  it('asks for a new sign-in when every SSO cookie is expired', async () => {
+    mockAuth.serverUrl = 'https://music.example.com';
+    mockAuth.pangolin = {
+      kind: 'sso',
+      host: 'music.example.com',
+      cookies: [{ name: 'a', value: 'b', expiresAt: 1 }],
+    };
+    const { syncProxyUpstreams } = loadFreshService();
+
+    await syncProxyUpstreams();
+
+    expect(mockAuth.setPangolinReauthRequired).toHaveBeenCalledWith(true);
+    expect(mockRefreshProxyUpstreams).toHaveBeenCalledWith([]);
+  });
+});
+
+describe('clearPangolinGate', () => {
+  it('drops the proxy headers and the SSO cookies for the resource host', async () => {
+    mockAuth.pangolin = {
+      kind: 'sso',
+      host: 'music.example.com',
+      cookies: [{ name: 'a', value: 'b', expiresAt: null }],
+    };
+    const { clearPangolinGate } = loadFreshService();
+    const { clearHostCookies } = require('../../../modules/expo-pangolin-auth/src') as {
+      clearHostCookies: jest.Mock;
+    };
+
+    await clearPangolinGate();
+
+    expect(mockSetProxyGate).toHaveBeenCalledWith({}, []);
+    expect(clearHostCookies).toHaveBeenCalledWith('music.example.com');
+  });
+
+  it('still resolves when clearing the proxy gate throws', async () => {
+    mockSetProxyGate.mockRejectedValueOnce(new Error('proxy down'));
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const { clearPangolinGate } = loadFreshService();
+
+    await expect(clearPangolinGate()).resolves.toBeUndefined();
     warnSpy.mockRestore();
   });
 });

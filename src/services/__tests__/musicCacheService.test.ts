@@ -3080,18 +3080,14 @@ describe('redownloadTrack', () => {
   });
 
   it('false when download throws', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { File } = require('expo-file-system');
-    File.downloadFileAsync.mockRejectedValueOnce(new Error('net'));
+    mockDownloadFileAsyncWithProgress.mockRejectedValueOnce(new Error('net'));
     seedSong(makeCachedSong('t1'));
     seedItem('album-1', { type: 'album', songIds: ['t1'] });
     expect(await redownloadTrack('album-1', 't1')).toBe(false);
   });
 
   it('returns true on success', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { File } = require('expo-file-system');
-    File.downloadFileAsync.mockResolvedValue(undefined);
+    mockDownloadFileAsyncWithProgress.mockResolvedValue({ uri: 'file:///tmp', bytes: 8000 });
     mockFileExists = true;
     mockFileSize = 8000;
     seedSong(makeCachedSong('t1'));
@@ -3100,9 +3096,7 @@ describe('redownloadTrack', () => {
   });
 
   it('uses downloadFormat extension when not raw', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { File } = require('expo-file-system');
-    File.downloadFileAsync.mockResolvedValue(undefined);
+    mockDownloadFileAsyncWithProgress.mockResolvedValue({ uri: 'file:///tmp', bytes: 8000 });
     mockFileExists = true;
     mockFileSize = 8000;
     playbackSettingsStore.setState({ downloadFormat: 'mp3', downloadMaxBitRate: null } as any);

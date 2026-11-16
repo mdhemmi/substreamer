@@ -83,8 +83,14 @@ export function downloadFileAsyncWithProgress(
   url: string,
   destinationUri: string,
   downloadId: string,
+  headers?: Record<string, string> | null,
 ): Promise<{ uri: string; bytes: number }> {
-  return ExpoAsyncFsModule.downloadFileAsyncWithProgress(url, destinationUri, downloadId);
+  return ExpoAsyncFsModule.downloadFileAsyncWithProgress(
+    url,
+    destinationUri,
+    downloadId,
+    headers && Object.keys(headers).length > 0 ? headers : null,
+  );
 }
 
 /**

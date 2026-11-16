@@ -11,6 +11,7 @@ import {
   getInstallStatus,
   isSSLError,
   resolveServerBase,
+  rewriteThroughProxy,
   refreshProxyUpstreams,
   __setProxyInfoForTests,
 } from '../ExpoSslTrust';
@@ -230,6 +231,34 @@ describe('resolveServerBase', () => {
     });
     // Same host, different scheme/port → not the registered self-signed upstream.
     expect(resolveServerBase('http://music.example.com:8080')).toBe('http://music.example.com:8080');
+  });
+});
+
+describe('rewriteThroughProxy', () => {
+  const isIOS = Platform.OS === 'ios';
+
+  afterEach(() => __setProxyInfoForTests(null));
+
+  it('leaves a file URL and an unregistered host alone', () => {
+    __setProxyInfoForTests({
+      port: 9,
+      upstreams: [{ baseUrl: 'https://music.example.com', token: 'tok' }],
+    });
+    expect(rewriteThroughProxy('file:///covers/a.jpg')).toBe('file:///covers/a.jpg');
+    expect(rewriteThroughProxy('https://other.example.com/rest/getCoverArt.view?id=1')).toBe(
+      'https://other.example.com/rest/getCoverArt.view?id=1',
+    );
+  });
+
+  it('rewrites a registered cover URL onto the loopback proxy (iOS)', () => {
+    __setProxyInfoForTests({
+      port: 9,
+      upstreams: [{ baseUrl: 'https://music.example.com', token: 'tok' }],
+    });
+    const url = 'https://music.example.com/rest/getCoverArt.view?id=1&u=ada';
+    expect(rewriteThroughProxy(url)).toBe(
+      isIOS ? 'http://127.0.0.1:9/tok/rest/getCoverArt.view?id=1&u=ada' : url,
+    );
   });
 });
 

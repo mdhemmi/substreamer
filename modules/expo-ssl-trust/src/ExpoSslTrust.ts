@@ -215,10 +215,46 @@ export function resolveServerBase(url: string): string {
 }
 
 /**
- * Reconcile the proxy's upstreams with the app's configured server base URLs
- * (e.g. primary + secondary). The native side proxies only the ones whose host
- * has a trusted self-signed cert and starts/stops the listener accordingly.
- * No-op on Android. Call after trusting/untrusting a cert and at boot.
+ * Rewrite an absolute http(s) URL through the loopback proxy when its origin
+ * is a registered upstream. `file://` and unregistered hosts pass through.
+ * Used for lock-screen artwork, which the player fetches itself.
+ */
+export function rewriteThroughProxy(url: string): string {
+  if (Platform.OS !== 'ios' || !cachedProxyInfo) return url;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return url;
+  const origin = `${parsed.protocol}//${parsed.host}`;
+  const proxied = resolveServerBase(origin);
+  if (proxied === origin) return url;
+  return `${proxied}${parsed.pathname}${parsed.search}`;
+}
+
+/**
+ * Headers the loopback proxy adds to upstream requests for `hosts`.
+ * An empty host list clears the gate. No-op on Android.
+ */
+export async function setProxyGate(
+  headers: Record<string, string>,
+  hosts: string[],
+): Promise<void> {
+  if (Platform.OS !== 'ios') return;
+  try {
+    await ExpoSslTrustModule.setProxyGate(headers, hosts);
+  } catch (err) {
+    console.warn('[expo-ssl-trust] setProxyGate failed:', err);
+  }
+}
+
+/**
+ * Reconcile the proxy's upstreams with the URLs the caller passes (pinned
+ * hosts and, when a Pangolin gate is on, that server too). The native side
+ * keeps a URL when its host is pinned or was named by `setProxyGate`.
+ * No-op on Android.
  */
 export async function refreshProxyUpstreams(baseUrls: string[]): Promise<void> {
   if (Platform.OS !== 'ios') return;

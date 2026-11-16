@@ -36,6 +36,7 @@ import {
   markReconcileRan,
 } from '../store/imageCacheStore';
 import { authStore } from '../store/authStore';
+import { notePangolinGateResponse, pangolinRequestHeaders } from './pangolinAuth';
 import { connectivityStore } from '../store/connectivityStore';
 import { offlineModeStore } from '../store/offlineModeStore';
 import { isReidRunning } from '../store/migrationGateStore';
@@ -1650,8 +1651,12 @@ async function downloadSourceImage(
   let response: Awaited<ReturnType<typeof fetch>>;
   try {
     logImageCache(`download id=${coverArtId} start url=${url}`);
+    const gateHeaders = pangolinRequestHeaders(url, authStore.getState().pangolin);
     const fetched = await withTimeout(
-      (signal) => fetch(url, { signal }),
+      (signal) => fetch(url, {
+        signal,
+        ...(Object.keys(gateHeaders).length > 0 ? { headers: gateHeaders } : {}),
+      }),
       SOURCE_FETCH_TIMEOUT_MS,
     );
     if (fetched === 'timeout') {
@@ -1660,6 +1665,7 @@ async function downloadSourceImage(
       return null;
     }
     response = fetched;
+    await notePangolinGateResponse(response);
   } catch (e) {
     logImageCache(
       `download id=${coverArtId} transport-error preserved err=${errMessage(e)}`,

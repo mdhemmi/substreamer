@@ -14,3 +14,4 @@ export const getTrustedCertificates = () => Promise.resolve([]);
 export const isCertificateTrusted = () => Promise.resolve(false);
 export const syncProxyUpstreams = () => Promise.resolve(null);
 export const getProxyInfo = () => Promise.resolve(null);
+export const setProxyGate = () => Promise.resolve();

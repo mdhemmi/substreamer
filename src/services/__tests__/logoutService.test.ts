@@ -13,6 +13,7 @@ jest.mock('../playerService', () => ({
 jest.mock('../scanService', () => ({ stopPolling: () => calls.push('stopPolling') }));
 jest.mock('../subsonicService', () => ({ clearApiCache: () => calls.push('clearApiCache') }));
 jest.mock('../sslTrustService', () => ({
+  clearPangolinGate: async () => { calls.push('clearPangolinGate'); },
   clearAllNativeTrust: async () => { calls.push('clearAllNativeTrust'); },
 }));
 
@@ -39,6 +40,7 @@ describe('logout', () => {
     await logout();
 
     expect(calls).toEqual([
+      'clearPangolinGate',
       'clearQueue pending=true',
       'stopPolling',
       'clearApiCache',

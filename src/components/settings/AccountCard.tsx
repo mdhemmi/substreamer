@@ -1,7 +1,7 @@
 import Ionicons from '@react-native-vector-icons/ionicons/static';
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { useTheme } from '../../hooks/useTheme';
@@ -33,7 +33,9 @@ export function AccountCard() {
   const adminRole = serverInfoStore((s) => s.adminRole);
   const shareRole = serverInfoStore((s) => s.shareRole);
 
+  const pangolin = authStore((s) => s.pangolin);
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [tokenVisible, setTokenVisible] = useState(false);
   const [changePasswordVisible, setChangePasswordVisible] = useState(false);
   const [deviceNameSheetVisible, setDeviceNameSheetVisible] = useState(false);
   // Optimistic position of the legacy-auth switch while a candidate value is
@@ -97,6 +99,11 @@ export function AccountCard() {
   }, [router, t]);
 
   const maskedPassword = password ? '•'.repeat(password.length) : '';
+  const pangolinValue = pangolin?.kind === 'token'
+    ? (tokenVisible ? pangolin.token : '•'.repeat(pangolin.token.length))
+    : pangolin?.kind === 'sso'
+      ? t('pangolinSsoActive')
+      : t('pangolinOff');
 
   return (
     <>
@@ -128,6 +135,36 @@ export function AccountCard() {
               ) : null}
             </View>
           </View>
+          {(Platform.OS === 'ios' || pangolin) && (
+            <View style={[styles.fieldRow, { borderBottomColor: colors.border }]}>
+              <Text style={[styles.fieldLabel, { color: colors.textPrimary }]}>{t('pangolinGate')}</Text>
+              <View style={styles.passwordValue}>
+                <Text style={[styles.fieldValue, { color: colors.textSecondary }]}>{pangolinValue}</Text>
+                {pangolin?.kind === 'token' ? (
+                  <Pressable
+                    onPress={() => setTokenVisible((v) => !v)}
+                    hitSlop={8}
+                    style={({ pressed }) => pressed && settingsStyles.pressed}
+                  >
+                    <Ionicons
+                      name={tokenVisible ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color={colors.textSecondary}
+                    />
+                  </Pressable>
+                ) : null}
+                {Platform.OS === 'ios' ? (
+                  <Pressable
+                    onPress={() => authStore.getState().setPangolinReauthRequired(true)}
+                    hitSlop={8}
+                    style={({ pressed }) => pressed && settingsStyles.pressed}
+                  >
+                    <Text style={{ color: colors.primary }}>{t('pangolinSignInAgain')}</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+          )}
           <View style={[styles.fieldRow, { borderBottomColor: colors.border }]}>
             <View style={styles.legacyLabelWrap}>
               <Text style={[styles.fieldLabel, { color: colors.textPrimary }]}>{t('legacyAuthentication')}</Text>

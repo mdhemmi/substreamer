@@ -13,6 +13,11 @@ const mockFetchServerInfo = jest.fn();
 jest.mock('../../services/subsonicService', () => ({
   login: (...args: unknown[]) => mockLogin(...args),
   fetchServerInfo: () => mockFetchServerInfo(),
+  normalizeServerUrl: (url: string) => {
+    let base = url.trim();
+    if (!base.startsWith('http://') && !base.startsWith('https://')) base = `https://${base}`;
+    return base.replace(/\/+$/, '').replace(/\/rest$/i, '');
+  },
 }));
 
 const mockTrust = jest.fn();
@@ -37,6 +42,11 @@ jest.mock('../../services/navidromeReid/reidSession', () => ({
   beginReidSession: (...args: unknown[]) => mockBeginReidSession(...args),
 }));
 
+const mockSignIn = jest.fn();
+jest.mock('../../../modules/expo-pangolin-auth/src', () => ({
+  signIn: (...args: unknown[]) => mockSignIn(...args),
+}));
+
 jest.mock('../../components/LanguageSelector', () => ({ LanguageSelector: () => null }));
 jest.mock('../../components/WaveformLogo', () => ({ __esModule: true, default: () => null }));
 jest.mock('../../components/CertificatePromptModal', () => ({
@@ -51,6 +61,7 @@ jest.mock('../../components/CertificatePromptModal', () => ({
 }));
 
 import React from 'react';
+import { Platform } from 'react-native';
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
 
 import i18n from '../../i18n/i18n';
@@ -66,7 +77,8 @@ const CERT = {
 beforeEach(() => {
   jest.clearAllMocks();
   mockDbHealthy = true;
-  authStore.setState({ isLoggedIn: false });
+  authStore.setState({ isLoggedIn: false, pangolin: null, pangolinReauthRequired: false });
+  mockSignIn.mockReset();
   mockGetCertificateInfo.mockResolvedValue(CERT);
   mockTrust.mockResolvedValue(undefined);
   mockLogin.mockResolvedValue({
@@ -158,5 +170,78 @@ describe('LoginScreen re-key decision', () => {
 
     finish();
     await waitFor(() => expect(authStore.getState().isLoggedIn).toBe(true));
+  });
+});
+
+describe('LoginScreen Pangolin gate', () => {
+  const fill = (screen: ReturnType<typeof render>) => {
+    fireEvent.changeText(screen.getByPlaceholderText(i18n.t('loginServerPlaceholder')), 'https://music.example');
+    fireEvent.changeText(screen.getByPlaceholderText(i18n.t('username')), 'user');
+    fireEvent.changeText(screen.getByPlaceholderText(i18n.t('password')), 'pass');
+  };
+
+  it('logs in with no gate by default', async () => {
+    const screen = render(<LoginScreen />);
+    fill(screen);
+    fireEvent.press(screen.getByText(i18n.t('logIn')));
+    await waitFor(() => expect(mockLogin).toHaveBeenCalledWith(
+      'https://music.example', 'user', 'pass', false, null,
+    ));
+    expect(mockSignIn).not.toHaveBeenCalled();
+  });
+
+  it('shows the three choices on iOS and sends an access token', async () => {
+    if (Platform.OS !== 'ios') return;
+    const screen = render(<LoginScreen />);
+    expect(screen.getByText(i18n.t('pangolinOff'))).toBeTruthy();
+    expect(screen.getByText(i18n.t('pangolinSignIn'))).toBeTruthy();
+    expect(screen.getByText(i18n.t('pangolinAccessToken'))).toBeTruthy();
+
+    fireEvent.press(screen.getByText(i18n.t('pangolinAccessToken')));
+    fill(screen);
+    fireEvent.changeText(screen.getByPlaceholderText(i18n.t('pangolinTokenId')), 'tid');
+    fireEvent.changeText(screen.getByPlaceholderText(i18n.t('pangolinToken')), 'secret');
+    fireEvent.press(screen.getByText(i18n.t('logIn')));
+
+    await waitFor(() => expect(mockLogin).toHaveBeenCalledWith(
+      'https://music.example',
+      'user',
+      'pass',
+      false,
+      { kind: 'token', tokenId: 'tid', token: 'secret' },
+    ));
+  });
+
+  it('signs in with SSO and stores the cookies on the session', async () => {
+    if (Platform.OS !== 'ios') return;
+    mockSignIn.mockResolvedValue([
+      { name: 'p_session_token_s.1', value: 'abc', expiresAt: null },
+    ]);
+    const screen = render(<LoginScreen />);
+    fireEvent.press(screen.getByText(i18n.t('pangolinSignIn')));
+    fill(screen);
+    fireEvent.press(screen.getByText(i18n.t('logIn')));
+
+    await waitFor(() => expect(authStore.getState().isLoggedIn).toBe(true));
+    expect(mockSignIn).toHaveBeenCalledWith('https://music.example', i18n.t('cancel'));
+    expect(authStore.getState().pangolin).toEqual({
+      kind: 'sso',
+      host: 'music.example',
+      cookies: [{ name: 'p_session_token_s.1', value: 'abc', expiresAt: null }],
+    });
+  });
+
+  it('shows the Pangolin message on a gate 401 and does not open the web view', async () => {
+    mockLogin.mockResolvedValueOnce({
+      success: false,
+      error: i18n.t('pangolinGateDetected'),
+      pangolinGate: true,
+    });
+    const screen = render(<LoginScreen />);
+    fill(screen);
+    fireEvent.press(screen.getByText(i18n.t('logIn')));
+    await waitFor(() => expect(screen.getByText(i18n.t('pangolinGateDetected'))).toBeTruthy());
+    expect(mockSignIn).not.toHaveBeenCalled();
+    expect(authStore.getState().isLoggedIn).toBe(false);
   });
 });

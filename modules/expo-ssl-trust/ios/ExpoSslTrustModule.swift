@@ -94,16 +94,24 @@ public class ExpoSslTrustModule: Module {
             promise.resolve(trusted)
         }
 
-        // Reconcile the local reverse proxy's upstreams with the app's
-        // configured server base URLs. Only URLs whose host has a trusted
-        // self-signed cert are proxied; everything else connects directly.
-        // Returns `{ port, upstreams: [{ baseUrl, token }] }` or null when no
-        // upstream needs proxying. iOS only — Android has no proxy (its
-        // OkHttp/TrustManager path handles trust at the HTTP layer).
+        // Headers the proxy adds when it forwards to one of `hosts`.
+        AsyncFunction("setProxyGate") { (headers: [String: String], hosts: [String], promise: Promise) in
+            SslTrustProxy.shared.setGate(headers: headers, hosts: hosts)
+            promise.resolve(nil)
+        }
+
+        // Reconcile the local reverse proxy's upstreams. A URL is kept when its
+        // host has a trusted self-signed cert OR was named by setProxyGate
+        // (a Pangolin server with a public certificate). Returns
+        // `{ port, upstreams: [{ baseUrl, token }] }` or null when nothing is
+        // proxied. iOS only.
         AsyncFunction("syncProxyUpstreams") { (baseUrls: [String], promise: Promise) in
             SslTrustStore.shared.initialize()
+            let gateHosts = SslTrustProxy.shared.gateHostSet()
             let trusted = baseUrls.filter { url in
                 guard let host = URL(string: url)?.host else { return false }
+                let name = host.lowercased().split(separator: ":").first.map(String.init) ?? host.lowercased()
+                if gateHosts.contains(name) { return true }
                 return SslTrustStore.shared.isCertificateTrusted(hostname: host)
             }
             for url in trusted { _ = SslTrustProxy.shared.register(baseUrl: url) }

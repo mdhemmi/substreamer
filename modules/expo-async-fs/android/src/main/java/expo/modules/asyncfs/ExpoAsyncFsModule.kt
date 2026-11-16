@@ -123,7 +123,7 @@ class ExpoAsyncFsModule : Module() {
     // concurrent calls run on separate threads. Expo's default module
     // queue is a single HandlerThread; without this, blocking execute()
     // calls would serialize all downloads.
-    AsyncFunction("downloadFileAsyncWithProgress") { url: String, destinationUri: String, downloadId: String, promise: Promise ->
+    AsyncFunction("downloadFileAsyncWithProgress") { url: String, destinationUri: String, downloadId: String, headers: Map<String, String>?, promise: Promise ->
       CoroutineScope(Dispatchers.IO).launch {
         try {
           val destPath = Uri.parse(destinationUri).path
@@ -163,7 +163,9 @@ class ExpoAsyncFsModule : Module() {
             }
             .build()
 
-          val request = Request.Builder().url(url).build()
+          val requestBuilder = Request.Builder().url(url)
+          headers?.forEach { (name, value) -> requestBuilder.header(name, value) }
+          val request = requestBuilder.build()
           val response = client.newCall(request).execute()
 
           if (!response.isSuccessful) {

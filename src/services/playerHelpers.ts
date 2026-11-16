@@ -17,6 +17,7 @@ import { resolveEffectiveFormat } from '../utils/effectiveFormat';
 import { resolveDisplayImages } from './imageCacheService';
 import { logImageCache } from './imageCacheLogger';
 import { getLocalTrackUri } from './musicCacheService';
+import { rewriteThroughProxy } from '../../modules/expo-ssl-trust/src';
 import { getStreamUrl, type Child } from './subsonicService';
 
 /** Map our RepeatModeSetting to RNQP's RepeatMode string union. */
@@ -174,7 +175,8 @@ export async function buildPlayableQueue(queue: readonly Child[]): Promise<{
   const filteredQueue: Child[] = [];
   for (let i = 0; i < songs.length; i++) {
     const child = songs[i];
-    const track = childToTrack(child, artwork[i].uri);
+    const art = artwork[i].uri;
+    const track = childToTrack(child, art ? rewriteThroughProxy(art) : art);
     if (track) {
       rnTracks.push(track);
       filteredQueue.push(child);

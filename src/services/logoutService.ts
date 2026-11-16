@@ -9,11 +9,14 @@ import { isLogoutPending, markLogoutPending } from '../store/logoutPending';
 import { resetAllStores } from '../store/resetAllStores';
 import { clearQueue } from './playerService';
 import { stopPolling } from './scanService';
-import { clearAllNativeTrust } from './sslTrustService';
+import { clearAllNativeTrust, clearPangolinGate } from './sslTrustService';
 import { clearApiCache } from './subsonicService';
 
 export async function logout(): Promise<void> {
   markLogoutPending();
+  // Drop the gate headers before anything else reads them. The webview jar for
+  // the resource host goes with them so the next account does not inherit it.
+  await clearPangolinGate();
   clearQueue();
   stopPolling();
   clearApiCache();
